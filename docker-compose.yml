@@ -5,7 +5,6 @@ services:
     build: .
     container_name: telegram_bot
     restart: always
-    volumes:
-      - ./bot.db:/app/bot.db  # сохраняем SQLite вне контейнера
+    volumes: []
     environment:
       - BOT_TOKEN
