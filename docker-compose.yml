@@ -7,3 +7,5 @@ services:
     restart: always
     volumes:
       - ./bot.db:/app/bot.db  # сохраняем SQLite вне контейнера
+    environment:
+      - BOT_TOKEN
