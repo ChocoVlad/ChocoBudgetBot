@@ -1,9 +1,10 @@
-from sqlalchemy import Column, Integer, String, Float, select
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy import Column, Integer, String, Float, DateTime, select
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+from datetime import datetime
 import json
 
-DATABASE_URL = "sqlite+aiosqlite:///./bot.db"
+DATABASE_URL = "sqlite+aiosqlite:///./data/bot.db"
 
 Base = declarative_base()
 engine = create_async_engine(DATABASE_URL, echo=False)
@@ -15,15 +16,17 @@ class UserSettings(Base):
     user_id = Column(Integer, primary_key=True, index=True)
     base = Column(String, nullable=True)
     amount = Column(Float, default=1.0)
-    selected = Column(String, nullable=False, default="[]")  # JSON сериализованный список
+    selected = Column(String, nullable=False, default="[]")
     msg_id = Column(Integer, nullable=True)
+    message_sent_at = Column(DateTime, nullable=True)
 
     def as_dict(self):
         return {
             "base": self.base,
             "amount": self.amount,
             "selected": json.loads(self.selected),
-            "msg_id": self.msg_id
+            "msg_id": self.msg_id,
+            "message_sent_at": self.message_sent_at.isoformat() if self.message_sent_at else None
         }
 
     def update_from_dict(self, data: dict):
@@ -31,12 +34,13 @@ class UserSettings(Base):
         self.amount = data.get("amount", 1.0)
         self.selected = json.dumps(data.get("selected", []))
         self.msg_id = data.get("msg_id")
-
+        sent_at = data.get("message_sent_at")
+        if sent_at:
+            self.message_sent_at = sent_at if isinstance(sent_at, datetime) else datetime.fromisoformat(sent_at)
 
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
 
 async def load_user_settings(user_id: int) -> dict:
     async with SessionLocal() as session:
@@ -45,8 +49,13 @@ async def load_user_settings(user_id: int) -> dict:
         if row:
             return row.as_dict()
         else:
-            return {"base": None, "amount": 1.0, "selected": [], "msg_id": None}
-
+            return {
+                "base": None,
+                "amount": 1.0,
+                "selected": [],
+                "msg_id": None,
+                "message_sent_at": None
+            }
 
 async def save_user_settings(user_id: int, data: dict):
     async with SessionLocal() as session:

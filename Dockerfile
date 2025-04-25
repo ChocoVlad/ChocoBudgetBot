@@ -1,20 +1,13 @@
-# Используем лёгкий образ Python
 FROM python:3.11-slim
 
-# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Копируем зависимости
 COPY requirements.txt .
+RUN apt-get update && apt-get install -y sqlite3 && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Устанавливаем зависимости
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Копируем код
 COPY . .
 
-# Указываем переменные окружения
 ENV PYTHONUNBUFFERED=1
 
-# Запускаем бота
 CMD ["python", "main.py"]

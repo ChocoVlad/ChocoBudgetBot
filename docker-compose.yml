@@ -5,6 +5,10 @@ services:
     build: .
     container_name: telegram_bot
     restart: always
-    volumes: []
+    volumes:
+      - ./data:/app/data
+      - ./migrates:/app/migrates
     environment:
       - BOT_TOKEN
+    env_file:
+      - .env
