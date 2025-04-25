@@ -56,6 +56,7 @@ async def update_or_resend_message(user_id: int, chat_id: int, text: str, reply_
     settings = await load_user_settings(user_id)
     msg_id = settings.get("msg_id")
     sent_at = settings.get("message_sent_at")
+    settings['chat_id'] = chat_id
     expired = False
 
     if msg_id and sent_at:
@@ -82,6 +83,7 @@ async def update_or_resend_message(user_id: int, chat_id: int, text: str, reply_
             # Обнуляем msg_id и дату
             settings["msg_id"] = None
             settings["message_sent_at"] = None
+            settings["chat_id"] = chat_id
             await save_user_settings(user_id, settings)
 
     # Удаляем старое сообщение, даже если редактирование не удалось
@@ -95,11 +97,11 @@ async def update_or_resend_message(user_id: int, chat_id: int, text: str, reply_
     msg = await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
     settings["msg_id"] = msg.message_id
     settings["message_sent_at"] = datetime.utcnow()
+    settings["chat_id"] = chat_id
     await save_user_settings(user_id, settings)
 
     # Загрузка обновлённого settings
     return await load_user_settings(user_id)
-
 
 
 def build_rates_text_and_keyboard(rates, settings):
@@ -143,7 +145,9 @@ async def ensure_user_and_message(message: types.Message) -> dict:
     settings = await load_user_settings(user_id)
     if not settings:
         settings = await load_user_settings(user_id)
-        await save_user_settings(user_id, settings)
+
+    settings["chat_id"] = chat_id
+    await save_user_settings(user_id, settings)
 
     # Если валюты не выбраны — отправляем отдельное сообщение
     if not settings.get("selected"):
@@ -151,6 +155,7 @@ async def ensure_user_and_message(message: types.Message) -> dict:
         msg = await bot.send_message(chat_id, text=text, reply_markup=markup)
         settings["msg_id"] = msg.message_id
         settings["message_sent_at"] = datetime.utcnow()
+        settings["chat_id"] = chat_id
         await save_user_settings(user_id, settings)
         return settings
 
@@ -170,6 +175,7 @@ async def process_amount(user_id: int, chat_id: int, amount: float):
         return
 
     settings["amount"] = round(amount, 4)
+    settings["chat_id"] = chat_id
     await save_user_settings(user_id, settings)
 
     rates = fetch_rates()
@@ -178,7 +184,6 @@ async def process_amount(user_id: int, chat_id: int, amount: float):
     settings = await update_or_resend_message(user_id, chat_id, text, keyboard)
 
     await save_user_settings(user_id, settings)
-
 
 
 @dp.message(CommandStart())
@@ -198,6 +203,7 @@ async def handle_start(message: types.Message):
         msg = await message.answer(text, reply_markup=markup)
         settings["msg_id"] = msg.message_id
         settings["message_sent_at"] = datetime.utcnow()
+        settings["chat_id"] = chat_id
         await save_user_settings(user_id, settings)
         return
 
@@ -211,6 +217,7 @@ async def handle_start(message: types.Message):
     msg = await message.answer(text, reply_markup=keyboard)
 
     settings["msg_id"] = msg.message_id
+    settings["chat_id"] = chat_id
     await save_user_settings(user_id, settings)
 
     try:
@@ -223,6 +230,7 @@ async def handle_start(message: types.Message):
 async def handle_settings(message: types.Message):
     settings = await ensure_user_and_message(message)
     rates = fetch_rates()
+    chat_id = message.chat.id
 
     builder = InlineKeyboardBuilder()
     for code in sorted(rates.keys()):
@@ -231,8 +239,9 @@ async def handle_settings(message: types.Message):
     builder.adjust(3)
     builder.button(text="⬅️ Назад", callback_data="back_to_main")
 
-    settings = await update_or_resend_message(message.from_user.id, message.chat.id, "Выберите валюты:",
+    settings = await update_or_resend_message(message.from_user.id, chat_id, "Выберите валюты:",
                                               builder.as_markup())
+    settings["chat_id"] = chat_id
     await save_user_settings(message.from_user.id, settings)
 
 
@@ -265,9 +274,10 @@ async def toggle_currency(callback: types.CallbackQuery):
     builder.adjust(3)
     builder.button(text="⬅️ Назад", callback_data="back_to_main")
 
-    settings = await update_or_resend_message(user_id, callback.message.chat.id, "Выберите валюты:", builder.as_markup())
+    settings = await update_or_resend_message(user_id, callback.message.chat.id, "Выберите валюты:",
+                                              builder.as_markup())
+    settings["chat_id"] = callback.message.chat.id
     await save_user_settings(user_id, settings)
-
 
 
 @dp.callback_query(F.data.startswith("set_base_"))
@@ -277,6 +287,7 @@ async def set_base_currency(callback: types.CallbackQuery, state: FSMContext):
 
     new_base = callback.data.split("_")[2]
     settings["base"] = new_base
+    settings["chat_id"] = callback.message.chat.id
     await save_user_settings(user_id, settings)
 
     await state.set_state(CurrencyStates.waiting_for_amount)
@@ -287,8 +298,8 @@ async def set_base_currency(callback: types.CallbackQuery, state: FSMContext):
     settings = await update_or_resend_message(user_id, callback.message.chat.id, text, keyboard)
 
     await callback.answer()
+    settings["chat_id"] = callback.message.chat.id
     await save_user_settings(user_id, settings)
-
 
 
 @dp.message(F.text.regexp(r"^\d+([.,]\d+)?$"))
@@ -304,7 +315,6 @@ async def handle_amount_input(message: types.Message, state: FSMContext):
         await state.clear()
     except Exception as e:
         logging.warning(f"Ошибка обработки ввода суммы: {e}")
-
 
 
 @dp.message(Command("refresh"))
@@ -325,11 +335,11 @@ async def back_to_settings(callback: types.CallbackQuery):
 
     settings["msg_id"] = None
     settings["message_sent_at"] = None
+    settings["chat_id"] = callback.message.chat.id
     await save_user_settings(user_id, settings)
 
     # Теперь отправляем новое сообщение
     await handle_settings(callback.message)
-
 
 
 @dp.callback_query(F.data == "back_to_main")
@@ -338,12 +348,49 @@ async def back_to_main(callback: types.CallbackQuery):
     settings = await load_user_settings(user_id)
     if not settings:
         settings = await load_user_settings(user_id)
+        settings["chat_id"] = callback.message.chat.id
         await save_user_settings(user_id, settings)
 
     rates = fetch_rates()
     text, keyboard = build_rates_text_and_keyboard(rates, settings)
 
     settings = await update_or_resend_message(user_id, callback.message.chat.id, text, keyboard)
+
+
+async def background_refresh_loop():
+    while True:
+        try:
+            from db import get_all_users, load_user_settings
+            users = await get_all_users()
+            rates = fetch_rates()
+
+            for user in users:
+                user_id = user["user_id"]
+                settings = await load_user_settings(user_id)
+                if not settings:
+                    continue
+
+                chat_id = settings.get("chat_id")
+                msg_id = settings.get("msg_id")
+                sent_at = settings.get("message_sent_at")
+
+                if not chat_id or not msg_id or not sent_at:
+                    continue
+
+                sent_time = sent_at if isinstance(sent_at, datetime) else datetime.fromisoformat(sent_at)
+                if datetime.utcnow() - sent_time < timedelta(hours=1):
+                    continue  # не трогаем, если меньше часа назад
+
+                if not settings.get("base") and settings.get("selected"):
+                    settings["base"] = settings["selected"][0]
+
+                text, keyboard = build_rates_text_and_keyboard(rates, settings)
+                await update_or_resend_message(user_id, chat_id, text, keyboard)
+
+        except Exception as e:
+            logging.warning(f"Ошибка при фоновом обновлении: {e}")
+
+        await asyncio.sleep(1 * 60 * 60)
 
 
 async def main():
@@ -356,6 +403,8 @@ async def main():
         BotCommand(command="settings", description="Настроить валюты"),
     ])
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
+    asyncio.create_task(background_refresh_loop())  # <-- вот здесь
 
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
