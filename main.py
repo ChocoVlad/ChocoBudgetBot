@@ -2,6 +2,8 @@ import os
 import logging
 import random
 import requests
+from datetime import datetime
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
@@ -18,7 +20,6 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-FIXED_AMOUNTS = ["1", "5", "10", "25", "50", "75", "100", "150", "200", "250", "300", "400", "500", "600", "700", "800", "900", "1000"]
 
 session = AiohttpSession()
 bot = Bot(
@@ -28,10 +29,13 @@ bot = Bot(
 )
 dp = Dispatcher(storage=MemoryStorage())
 
+
 class CurrencyStates(StatesGroup):
     waiting_for_amount = State()
 
+
 user_settings = {}
+
 
 def fetch_rates():
     try:
@@ -44,13 +48,13 @@ def fetch_rates():
         logging.error(f"Ошибка при получении курсов: {e}")
         return {}
 
+
 def build_rates_text_and_keyboard(rates, settings):
     base = settings["base"]
     selected = settings["selected"]
     amount = settings.get("amount", 1.0)
     base_rate = rates[base]["Value"] / rates[base]["Nominal"]
 
-    lines = []
     builder = InlineKeyboardBuilder()
 
     for code in selected:
@@ -60,12 +64,13 @@ def build_rates_text_and_keyboard(rates, settings):
         else:
             relative = (base_rate / target_rate) * amount
             label = f"{code}: {relative:.2f}"
-        lines.append(label)
         builder.button(text=label, callback_data=f"set_base_{code}")
     builder.adjust(1)
 
-    text = "\n".join(lines)
+    timestamp = datetime.now().strftime("Обновлено: %d-%m %H:%M:%S")
+    text = f"<i>{timestamp}</i>"
     return text, builder.as_markup()
+
 
 async def process_amount(user_id: int, chat_id: int, amount: float):
     settings = user_settings.get(user_id)
@@ -88,6 +93,7 @@ async def process_amount(user_id: int, chat_id: int, amount: float):
         await save_user_settings(user_id, settings)
     except Exception as e:
         logging.error(f"Ошибка обновления сообщения: {e}")
+
 
 @dp.message(CommandStart())
 async def handle_start(message: types.Message):
@@ -113,6 +119,7 @@ async def handle_start(message: types.Message):
     settings["msg_id"] = msg.message_id
     await save_user_settings(user_id, settings)
 
+
 @dp.message(Command("settings"))
 async def handle_settings(message: types.Message):
     user_id = message.from_user.id
@@ -128,7 +135,25 @@ async def handle_settings(message: types.Message):
         builder.button(text=f"{mark} {code}", callback_data=f"toggle_{code}")
     builder.adjust(3)
     builder.button(text="⬅️ Назад", callback_data="back_to_main")
-    await message.answer("Выберите валюты:", reply_markup=builder.as_markup())
+
+    msg_id = settings.get("msg_id")
+    if msg_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=msg_id,
+                text="Выберите валюты:",
+                reply_markup=builder.as_markup()
+            )
+        except Exception as e:
+            logging.warning(f"Ошибка при открытии настроек: {e}")
+
+    try:
+        await message.delete()
+    except Exception as e:
+        logging.warning(f"Ошибка при удалении команды /settings: {e}")
+
+
 
 @dp.callback_query(F.data.startswith("toggle_"))
 async def toggle_currency(callback: types.CallbackQuery):
@@ -163,6 +188,7 @@ async def toggle_currency(callback: types.CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
     await save_user_settings(user_id, settings)
 
+
 @dp.callback_query(F.data.startswith("set_base_"))
 async def set_base_currency(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -193,6 +219,7 @@ async def set_base_currency(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.answer()
 
+
 @dp.message(F.text.regexp(r"^\d+([.,]\d+)?$"))
 async def handle_amount_input(message: types.Message, state: FSMContext):
     try:
@@ -204,16 +231,34 @@ async def handle_amount_input(message: types.Message, state: FSMContext):
     except Exception as e:
         logging.warning(f"Ошибка обработки ввода суммы: {e}")
 
-@dp.message(F.text.regexp(r"^/(\d+)$"))
-async def handle_numeric_command(message: types.Message, state: FSMContext):
+
+@dp.message(Command("refresh"))
+async def handle_refresh(message: types.Message):
+    user_id = message.from_user.id
+    settings = user_settings.get(user_id)
+    if not settings:
+        settings = await load_user_settings(user_id)
+        user_settings[user_id] = settings
+
+    rates = fetch_rates()
+    text, keyboard = build_rates_text_and_keyboard(rates, settings)
+
+    msg_id = settings.get("msg_id")
+    if msg_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=msg_id,
+                text=text,
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            logging.warning(f"Ошибка при обновлении курсов: {e}")
     try:
-        amount = float(message.text.lstrip("/"))
-        await process_amount(message.from_user.id, message.chat.id, amount)
-        await save_user_settings(message.from_user.id, user_settings[message.from_user.id])
-        await state.clear()
         await message.delete()
     except Exception as e:
-        logging.warning(f"Ошибка обработки команды: {e}")
+        logging.warning(f"Ошибка при удалении команды /refresh: {e}")
+
 
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: types.CallbackQuery):
@@ -237,20 +282,23 @@ async def back_to_main(callback: types.CallbackQuery):
     except Exception as e:
         logging.warning(f"Не удалось обновить сообщение: {e}")
 
+
 async def main():
     from aiogram.types import BotCommand, MenuButtonCommands
 
     await init_db()
 
     await bot.set_my_commands([
-        BotCommand(command=amount, description=f"Сумма {amount}")
-        for amount in FIXED_AMOUNTS
+        BotCommand(command="refresh", description="Обновить курсы"),
+        BotCommand(command="settings", description="Настроить валюты"),
     ])
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
+
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())
