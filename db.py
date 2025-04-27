@@ -1,11 +1,11 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, select
+from sqlalchemy import Column, String, Float, DateTime, select, BigInteger
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
 import json
 import os
 
-DATABASE_URL = "sqlite+aiosqlite:///./data/bot.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://bot_user:bot_password@db:5432/bot_db")
 
 Base = declarative_base()
 engine = create_async_engine(DATABASE_URL, echo=False)
@@ -15,13 +15,13 @@ SessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
 class UserSettings(Base):
     __tablename__ = "user_settings"
 
-    user_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, primary_key=True, index=True)
     base = Column(String, nullable=True)
     amount = Column(Float, default=1.0)
     selected = Column(String, nullable=False, default="[]")
-    msg_id = Column(Integer, nullable=True)
+    msg_id = Column(BigInteger, nullable=True)
     message_sent_at = Column(DateTime, nullable=True)
-    chat_id = Column(Integer, nullable=True)  # ✅ добавили
+    chat_id = Column(BigInteger, nullable=True)  # ✅ добавили
 
     def as_dict(self):
         return {

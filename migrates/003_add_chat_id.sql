@@ -1,2 +1,1 @@
-ALTER TABLE user_settings
-ADD COLUMN chat_id INTEGER;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_id BIGINT;

@@ -10,5 +10,23 @@ services:
       - ./migrates:/app/migrates
     environment:
       - BOT_TOKEN
+      - DATABASE_URL=postgresql+asyncpg://bot_user:bot_password@db:5432/bot_db
     env_file:
       - .env
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    container_name: telegram_bot_db
+    restart: always
+    environment:
+      POSTGRES_DB: bot_db
+      POSTGRES_USER: bot_user
+      POSTGRES_PASSWORD: bot_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+      - ./migrate.sh:/app/migrate.sh
+      - ./migrates:/app/migrates

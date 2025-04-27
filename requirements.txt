@@ -4,3 +4,4 @@ aiogram
 requests
 greenlet
 dotenv
+asyncpg

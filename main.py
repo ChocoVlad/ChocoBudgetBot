@@ -1,9 +1,13 @@
 import os
 import logging
 import random
+
+import asyncpg
 import requests
 from datetime import datetime, timedelta
 
+import aiohttp
+import json
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
@@ -34,16 +38,41 @@ class CurrencyStates(StatesGroup):
     waiting_for_amount = State()
 
 
-def fetch_rates():
-    try:
-        response = requests.get("https://www.cbr-xml-daily.ru/daily_json.js", timeout=5)
-        data = response.json()
-        valutes = data["Valute"]
-        valutes["RUB"] = {"Value": 1.0, "Nominal": 1, "Name": "Российский рубль"}
-        return valutes
-    except Exception as e:
-        logging.error(f"Ошибка при получении курсов: {e}")
-        return {}
+async def fetch_rates():
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://www.cbr-xml-daily.ru/daily_json.js", timeout=5) as response:
+            text = await response.text()
+
+            try:
+                # Пробуем вручную распарсить текст как JSON
+                data = json.loads(text)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Не удалось декодировать JSON: {e}")
+
+            valutes = data.get("Valute")
+            if not valutes:
+                raise ValueError("Нет данных по валютам в ответе.")
+
+            valutes["RUB"] = {"Value": 1.0, "Nominal": 1, "Name": "Российский рубль"}
+            return valutes
+
+
+async def wait_for_postgres():
+    while True:
+        try:
+            conn = await asyncpg.connect(
+                user="bot_user",
+                password="bot_password",
+                database="bot_db",
+                host="db",
+                port="5432",
+            )
+            await conn.close()
+            print("PostgreSQL доступен, продолжаем запуск...")
+            break
+        except Exception as e:
+            print(f"Ожидаем PostgreSQL... {e}")
+            await asyncio.sleep(1)
 
 
 def build_no_currency_selected_message():
@@ -162,7 +191,7 @@ async def ensure_user_and_message(message: types.Message) -> dict:
     if not settings.get("base") and settings["selected"]:
         settings["base"] = settings["selected"][0]
 
-    rates = fetch_rates()
+    rates = await fetch_rates()
     text, keyboard = build_rates_text_and_keyboard(rates, settings)
 
     settings = await update_or_resend_message(user_id, chat_id, text, keyboard)
@@ -178,7 +207,7 @@ async def process_amount(user_id: int, chat_id: int, amount: float):
     settings["chat_id"] = chat_id
     await save_user_settings(user_id, settings)
 
-    rates = fetch_rates()
+    rates = await fetch_rates()
     text, keyboard = build_rates_text_and_keyboard(rates, settings)
 
     settings = await update_or_resend_message(user_id, chat_id, text, keyboard)
@@ -191,32 +220,39 @@ async def handle_start(message: types.Message):
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    # Загружаем настройки пользователя
     settings = await load_user_settings(user_id)
-    if not settings:
-        settings = await load_user_settings(user_id)
-        settings[user_id] = settings
+    is_new_user = not settings.get("selected")  # Если нет выбранных валют — считаем новым
 
-    # Если валюты не выбраны — отправляем сообщение с предложением настроить
-    if not settings or not settings.get("selected"):
-        text, markup = build_no_currency_selected_message()
-        msg = await message.answer(text, reply_markup=markup)
-        settings["msg_id"] = msg.message_id
-        settings["message_sent_at"] = datetime.utcnow()
+    # Если это новый пользователь (нет выбранных валют)
+    if is_new_user:
+        # Сохраняем chat_id сразу
         settings["chat_id"] = chat_id
         await save_user_settings(user_id, settings)
+
+        # Отправляем сообщение с предложением настроить валюты
+        text, markup = build_no_currency_selected_message()
+        msg = await bot.send_message(chat_id, text=text, reply_markup=markup)
+
+        settings["msg_id"] = msg.message_id
+        settings["message_sent_at"] = datetime.utcnow()
+        await save_user_settings(user_id, settings)
+
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
         return
 
-    # Если нет базовой валюты — устанавливаем первую из выбранных
-    if not settings.get("base"):
+    # Если пользователь уже есть и есть валюты
+    if not settings.get("base") and settings["selected"]:
         settings["base"] = settings["selected"][0]
 
-    # Строим и отправляем новое сообщение с курсами
-    rates = fetch_rates()
+    rates = await fetch_rates()
     text, keyboard = build_rates_text_and_keyboard(rates, settings)
-    msg = await message.answer(text, reply_markup=keyboard)
 
-    settings["msg_id"] = msg.message_id
+    settings = await update_or_resend_message(user_id, chat_id, text, keyboard)
+
     settings["chat_id"] = chat_id
     await save_user_settings(user_id, settings)
 
@@ -229,7 +265,7 @@ async def handle_start(message: types.Message):
 @dp.message(Command("settings"))
 async def handle_settings(message: types.Message):
     settings = await ensure_user_and_message(message)
-    rates = fetch_rates()
+    rates = await fetch_rates()
     chat_id = message.chat.id
 
     builder = InlineKeyboardBuilder()
@@ -266,7 +302,7 @@ async def toggle_currency(callback: types.CallbackQuery):
     await save_user_settings(user_id, settings)
     await callback.answer()
 
-    rates = fetch_rates()
+    rates = await fetch_rates()
     builder = InlineKeyboardBuilder()
     for curr in sorted(rates.keys()):
         mark = "✅" if curr in selected else "❌"
@@ -292,7 +328,7 @@ async def set_base_currency(callback: types.CallbackQuery, state: FSMContext):
 
     await state.set_state(CurrencyStates.waiting_for_amount)
 
-    rates = fetch_rates()
+    rates = await fetch_rates()
     text, keyboard = build_rates_text_and_keyboard(rates, settings)
 
     settings = await update_or_resend_message(user_id, callback.message.chat.id, text, keyboard)
@@ -351,7 +387,7 @@ async def back_to_main(callback: types.CallbackQuery):
         settings["chat_id"] = callback.message.chat.id
         await save_user_settings(user_id, settings)
 
-    rates = fetch_rates()
+    rates = await fetch_rates()
     text, keyboard = build_rates_text_and_keyboard(rates, settings)
 
     settings = await update_or_resend_message(user_id, callback.message.chat.id, text, keyboard)
@@ -362,7 +398,7 @@ async def background_refresh_loop():
         try:
             from db import get_all_users, load_user_settings
             users = await get_all_users()
-            rates = fetch_rates()
+            rates = await fetch_rates()
 
             for user in users:
                 user_id = user["user_id"]
@@ -396,6 +432,7 @@ async def background_refresh_loop():
 async def main():
     from aiogram.types import BotCommand, MenuButtonCommands
 
+    await wait_for_postgres()
     await init_db()
 
     await bot.set_my_commands([
@@ -404,10 +441,11 @@ async def main():
     ])
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
-    asyncio.create_task(background_refresh_loop())  # <-- вот здесь
+    asyncio.create_task(background_refresh_loop())
 
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
+
 
 
 if __name__ == "__main__":

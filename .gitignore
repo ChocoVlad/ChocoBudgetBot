@@ -25,3 +25,7 @@ bot.db
 # OS
 .DS_Store
 Thumbs.db
+
+#DB
+postgres_data/
+*data.db
