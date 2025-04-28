@@ -38,6 +38,7 @@ CURRENCY_TO_COUNTRY = {
     "VND": "VN",
     "THB": "TH",
     "AED": "AE",
+    "KGS": "KG",
     "SGD": "SG"
 }
 
@@ -97,7 +98,7 @@ def build_reply_keyboard():
             [
                 types.KeyboardButton(text="×2"),
                 types.KeyboardButton(text="/2"),
-                types.KeyboardButton(text="Reset"),
+                types.KeyboardButton(text="Сбросить"),
             ]
         ],
         resize_keyboard=True,
@@ -233,9 +234,38 @@ async def show_rates(user_id: int):
 async def start(message: types.Message):
     await delete_user_message(message)
     user_id = message.from_user.id
+
     settings = await load_user_settings(user_id)
 
     settings.update({
+        "chat_id": message.chat.id,
+        "recent_amounts": [],
+        "amount": 1.0,
+        "msg_id": None,
+        "message_sent_at": None,
+    })
+
+    await save_user_settings(user_id, settings)
+
+    selected = settings.get("selected", [])
+
+    if selected:
+        # Если уже есть выбранные валюты, сразу показываем курсы
+        await show_rates(user_id)
+    else:
+        # Всегда отправляем приветственное сообщение с Reply клавиатурой
+        await send_welcome_message(message.chat.id)
+        # Если валют ещё нет — показываем выбор валют
+        await show_currency_selection(user_id)
+
+
+@dp.message(Command("restart"))
+async def restart(message: types.Message):
+    await delete_user_message(message)
+    user_id = message.from_user.id
+
+    # Полная очистка данных пользователя
+    settings = {
         "chat_id": message.chat.id,
         "recent_amounts": [],
         "selected": [],
@@ -243,16 +273,22 @@ async def start(message: types.Message):
         "amount": 1.0,
         "msg_id": None,
         "message_sent_at": None,
-    })
+    }
     await save_user_settings(user_id, settings)
 
+    # Отправляем приветственное сообщение с ReplyKeyboard
     await send_welcome_message(message.chat.id)
+
+    # Отправляем выбор валют
     await show_currency_selection(user_id)
 
 
-@dp.message(Command("restart"))
-async def restart(message: types.Message):
-    await start(message)
+@dp.message(Command("refresh"))
+async def refresh(message: types.Message):
+    await delete_user_message(message)
+
+    user_id = message.from_user.id
+    await show_rates(user_id)
 
 
 @dp.message()
