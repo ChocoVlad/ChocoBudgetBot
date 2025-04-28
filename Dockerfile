@@ -1,13 +1,14 @@
-FROM python:3.11-slim
+FROM python:3.11
 
 WORKDIR /app
 
+# Установим psql
+RUN apt-get update && apt-get install -y postgresql-client
+
 COPY requirements.txt .
-RUN apt-get update && apt-get install -y sqlite3 && \
-    pip install --no-cache-dir -r requirements.txt
+
+RUN pip install -r requirements.txt
 
 COPY . .
-
-ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "main.py"]

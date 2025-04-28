@@ -5,3 +5,4 @@ requests
 greenlet
 dotenv
 asyncpg
+pycountry

@@ -1,4 +1,4 @@
-.PHONY: start stop restart migrate-up migrate-down
+.PHONY: start stop restart migrate-up migrate-down migrate-up-one migrate-down-one
 
 start:
 	docker compose up -d --build
@@ -11,7 +11,13 @@ restart:
 	make start
 
 migrate-up:
-	docker compose exec db bash -c "PGPASSWORD=bot_password bash /app/migrate.sh up"
+	docker compose run --rm bot bash ./migrate.sh up
 
 migrate-down:
-	docker compose exec db bash -c "PGPASSWORD=bot_password bash /app/migrate.sh down"
+	docker compose run --rm bot bash ./migrate.sh down
+
+migrate-up-one:
+	docker compose run --rm bot goose -dir ./migrations -table migrations_applied up-by-one
+
+migrate-down-one:
+	docker compose run --rm bot goose -dir ./migrations -table migrations_applied down-by-one

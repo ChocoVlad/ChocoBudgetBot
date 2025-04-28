@@ -5,5 +5,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
     selected TEXT NOT NULL DEFAULT '[]',
     msg_id BIGINT,
     message_sent_at TIMESTAMP,
-    chat_id BIGINT
+    chat_id BIGINT,
+    recent_amounts TEXT NOT NULL DEFAULT '[]'
 );
