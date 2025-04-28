@@ -97,8 +97,10 @@ def build_reply_keyboard():
             ],
             [
                 types.KeyboardButton(text="×2"),
-                types.KeyboardButton(text="/2"),
-                types.KeyboardButton(text="Сбросить"),
+                types.KeyboardButton(text="×10"),
+                types.KeyboardButton(text="÷2"),
+                types.KeyboardButton(text="÷10"),
+                types.KeyboardButton(text="🔄")
             ]
         ],
         resize_keyboard=True,
@@ -308,7 +310,7 @@ async def handle_user_message(message: types.Message):
         elif text.startswith("/") or text.startswith("÷"):
             divisor = float(text[1:])
             settings["amount"] /= divisor
-        elif text.lower() == "reset":
+        elif text in ("🔄", "сброс", "сбросить"):
             settings["amount"] = 1.0
         else:
             amount = float(text.replace(",", "."))
