@@ -10,7 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 
-from db import init_db, load_user_settings, save_user_settings
+from db import init_db, load_user_settings, save_user_settings, get_all_users
 
 load_dotenv()
 
@@ -134,7 +134,6 @@ async def build_rates_keyboard(selected_currencies, base_currency, rates, amount
     builder.button(text="🔙 Изменить выбор валют", callback_data="back_to_selection")
     builder.adjust(1)
     return builder.as_markup()
-
 
 
 async def build_currency_keyboard(all_currencies, selected_currencies):
@@ -365,9 +364,32 @@ async def set_commands(bot: Bot):
     await bot.set_my_commands(commands)
 
 
+async def periodic_update_all_users():
+    while True:
+        await asyncio.sleep(7200)
+
+        users = await get_all_users()
+        now = datetime.now()
+
+        for user in users:
+            user_id = user["user_id"]
+            settings = await load_user_settings(user_id)
+
+            last_update = settings.get("message_sent_at")
+            if not last_update:
+                continue
+
+            if isinstance(last_update, str):
+                last_update = datetime.fromisoformat(last_update)
+
+            if (now - last_update).total_seconds() > 7200:
+                await show_rates(user_id)
+
+
 async def main():
     await init_db()
     await set_commands(bot)
+    asyncio.create_task(periodic_update_all_users())
     await dp.start_polling(bot)
 
 

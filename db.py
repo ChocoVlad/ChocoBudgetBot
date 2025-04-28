@@ -92,3 +92,9 @@ async def save_user_settings(user_id: int, data: dict):
             session.add(row)
         row.update_from_dict(data)
         await session.commit()
+
+
+async def get_all_users():
+    async with SessionLocal() as session:
+        result = await session.execute(select(UserSettings.user_id).distinct())
+        return [{"user_id": row[0]} for row in result.all()]
