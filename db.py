@@ -33,6 +33,7 @@ class UserSettings(Base):
     message_sent_at = Column(DateTime, nullable=True)
     chat_id = Column(BigInteger, nullable=True)
     recent_amounts = Column(String, nullable=False, default="[]")
+    timezone = Column(String, nullable=True, default="UTC")  # <--- Новое поле
 
     def as_dict(self):
         return {
@@ -42,7 +43,8 @@ class UserSettings(Base):
             "msg_id": self.msg_id,
             "message_sent_at": self.message_sent_at.isoformat() if self.message_sent_at else None,
             "chat_id": self.chat_id,
-            "recent_amounts": json.loads(self.recent_amounts) if self.recent_amounts else []
+            "recent_amounts": json.loads(self.recent_amounts) if self.recent_amounts else [],
+            "timezone": self.timezone or "UTC"
         }
 
     def update_from_dict(self, data: dict):
@@ -57,6 +59,7 @@ class UserSettings(Base):
         recent = data.get("recent_amounts")
         if recent is not None:
             self.recent_amounts = json.dumps(recent)
+        self.timezone = data.get("timezone", "UTC")
 
 
 async def init_db():
@@ -79,7 +82,8 @@ async def load_user_settings(user_id: int) -> dict:
                 "msg_id": None,
                 "message_sent_at": None,
                 "chat_id": None,
-                "recent_amounts": []
+                "recent_amounts": [],
+                "timezone": None
             }
 
 

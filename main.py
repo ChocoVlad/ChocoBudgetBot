@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 
 import requests
+import pytz
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -41,6 +42,13 @@ CURRENCY_TO_COUNTRY = {
     "KGS": "KG",
     "SGD": "SG"
 }
+
+popular_timezones = [
+    "Europe/Moscow", "Europe/London", "Europe/Berlin", "Asia/Tokyo",
+    "Asia/Shanghai", "Asia/Bangkok", "Asia/Almaty", "Asia/Kolkata",
+    "Asia/Dubai", "America/New_York", "America/Los_Angeles",
+    "America/Sao_Paulo", "Africa/Cairo", "Australia/Sydney"
+]
 
 
 def country_flag(country_code: str) -> str:
@@ -227,7 +235,11 @@ async def show_rates(user_id: int):
         settings["base"] = base_currency
         await save_user_settings(user_id, settings)
 
-    text = f"Курсы валют\nОбновлено: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
+    tz_name = settings.get("timezone", "UTC")
+    tz = pytz.timezone(tz_name)
+    now = datetime.now(pytz.utc).astimezone(tz)
+
+    text = f"Курсы валют\nОбновлено: {now.strftime('%d.%m.%Y %H:%M:%S')}"
     keyboard = await build_rates_keyboard(selected, base_currency, rates, amount)
     await update_dynamic_message(user_id, text, keyboard)
 
@@ -293,6 +305,24 @@ async def refresh(message: types.Message):
     await show_rates(user_id)
 
 
+@dp.message(Command("setting"))
+async def settings_menu(message: types.Message):
+    await delete_user_message(message)
+    user_id = message.from_user.id
+
+    keyboard = InlineKeyboardBuilder()
+    keyboard.button(text="🌐 Настроить часовой пояс", callback_data="set_timezone")
+    keyboard.button(text="💱 Настроить валюты", callback_data="set_currencies")
+    keyboard.adjust(1)
+
+    settings = await load_user_settings(user_id)
+    await update_dynamic_message(
+        user_id,
+        "Что вы хотите настроить?",
+        keyboard.as_markup()
+    )
+
+
 @dp.message()
 async def handle_user_message(message: types.Message):
     user_id = message.from_user.id
@@ -323,6 +353,58 @@ async def handle_user_message(message: types.Message):
     await show_rates(user_id)
 
     await delete_user_message(message)
+
+
+@dp.callback_query(F.data == "set_timezone")
+async def show_timezone_selection(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+
+    keyboard = InlineKeyboardBuilder()
+
+    for tz_name in popular_timezones:
+        try:
+            tz = pytz.timezone(tz_name)
+            offset = datetime.now(tz).utcoffset()
+            if offset is None:
+                continue
+            total_minutes = int(offset.total_seconds() / 60)
+            hours, minutes = divmod(abs(total_minutes), 60)
+            sign = '+' if total_minutes >= 0 else '-'
+            offset_str = f"UTC{sign}{hours}" if minutes == 0 else f"UTC{sign}{hours}:{minutes:02}"
+            display_name = f"{tz_name} ({offset_str})"
+            keyboard.button(text=display_name, callback_data=f"timezone_{tz_name}")
+        except Exception:
+            continue
+
+    keyboard.adjust(1)
+
+    await update_dynamic_message(
+        user_id,
+        "Выберите ваш часовой пояс:",
+        keyboard.as_markup()
+    )
+
+
+@dp.callback_query(F.data.startswith("timezone_"))
+async def set_user_timezone(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    timezone = callback.data.replace("timezone_", "")
+    settings = await load_user_settings(user_id)
+
+    settings["timezone"] = timezone
+    await save_user_settings(user_id, settings)
+    selected = settings.get("selected", [])
+
+    if selected:
+        await show_rates(user_id)
+    else:
+        await show_currency_selection(user_id)
+
+
+@dp.callback_query(F.data == "set_currencies")
+async def show_currency_config(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    await show_currency_selection(user_id)
 
 
 @dp.callback_query(F.data == "back_to_selection")
@@ -397,7 +479,8 @@ async def change_base_currency(callback: types.CallbackQuery):
 async def set_commands(bot: Bot):
     commands = [
         types.BotCommand(command="restart", description="Перезапустить бота"),
-        types.BotCommand(command="refresh", description="Обновить курсы валют")
+        types.BotCommand(command="refresh", description="Обновить курсы валют"),
+        types.BotCommand(command="setting", description="Настройки"),
     ]
     await bot.set_my_commands(commands)
 
